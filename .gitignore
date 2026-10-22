@@ -1,0 +1,28 @@
+
+# Environment variables and API keys
+.env
+.env.*
+!.env.example
+
+# Python virtual environment
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Downloaded audio and video
+downloads/
+*.wav
+*.mp3
+*.mp4
+*.webm
+
+# Local vector database
+vector_db/
+chroma_db/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
