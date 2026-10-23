@@ -20,11 +20,15 @@ def get_embeddings():
 def build_vector_store(transcript: str) -> Chroma:
     print("Building vector Store")
 
+    safe_text = transcript.strip() if transcript and transcript.strip() else "No transcript content available for this session."
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
         chunk_overlap=50
     )
-    chunks = splitter.split_text(transcript)
+    chunks = splitter.split_text(safe_text)
+    if not chunks:
+        chunks = [safe_text]
 
     docs = [
         Document(
@@ -35,6 +39,17 @@ def build_vector_store(transcript: str) -> Chroma:
     ]
 
     embeddings = get_embeddings()
+
+    # Reset previous collection so previous sessions do not contaminate this meeting
+    try:
+        old_vs = Chroma(
+            collection_name=COLLECTION_NAME,
+            embedding_function=embeddings,
+            persist_directory=CHROMA_DIR
+        )
+        old_vs.delete_collection()
+    except Exception:
+        pass
 
     vector_store = Chroma.from_documents(
         documents=docs,

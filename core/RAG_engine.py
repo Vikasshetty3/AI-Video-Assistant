@@ -1,17 +1,13 @@
 import os
-from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from core.vector_store import build_vector_store, load_vector_store, get_retriever
+from core.llm_utils import get_groq_llm, invoke_with_retry
 
 
 def get_llm():
-    return ChatGroq(
-        model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
-        groq_api_key=os.getenv("GROQ_API_KEY"),
-        temperature=0.3,
-    )
+    return get_groq_llm(temperature=0.3)
 
 
 def format_docs(docs):
@@ -55,7 +51,7 @@ Context from meeting transcript:
 
 def load_rag_chain():
     vector_store = load_vector_store()
-    retriver = get_retriever()
+    retriever = get_retriever(vector_store)
     llm = get_llm()
 
     prompt = ChatPromptTemplate.from_messages([
@@ -77,7 +73,7 @@ Context from meeting transcript:
 
     rag_chain = (
         {
-            "context": retriver | RunnableLambda(format_docs),
+            "context": retriever | RunnableLambda(format_docs),
             "question": RunnablePassthrough(),
         }
         | prompt
@@ -90,6 +86,6 @@ Context from meeting transcript:
 
 def ask_question(rag_chain, question: str) -> str:
     print(f"Question: {question}")
-    answer = rag_chain.invoke(question)
+    answer = invoke_with_retry(rag_chain, question)
     print(f"Answer: {answer}")
     return answer

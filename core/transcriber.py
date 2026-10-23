@@ -2,6 +2,9 @@ import whisper
 import os
 import requests
 from pydub import AudioSegment
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Sarvam's sync STT-translate API rejects audio longer than 30s.
 # We slice each chunk into 25s pieces (with a 5s safety margin) before sending.
@@ -14,6 +17,8 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
 SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
 SARVAM_MODEL = os.getenv("SARVAM_STT_MODEL", "saaras:v4")
+if SARVAM_MODEL == "saaras:v2.5":
+    SARVAM_MODEL = "saaras:v4"
 
 _model = None
 
@@ -29,12 +34,41 @@ def load_model():
     return _model 
 
 
-def transcribe_chunk_whisper(chunk_path: str) -> str:
+def transcribe_chunk_whisper(chunk_path: str, language: str = None) -> str:
+    if not os.path.exists(chunk_path):
+        return ""
 
     model = load_model()  
 
-    result = model.transcribe(chunk_path, task="transcribe")  
-    return result["text"]  
+    kwargs = {
+        "task": "transcribe",
+        "temperature": 0.0,
+        "condition_on_previous_text": False,
+        "fp16": False,
+    }
+    if language == "kannada":
+        kwargs["language"] = "kn"
+    elif language in ["hindi", "hinglish"]:
+        kwargs["language"] = "hi"
+
+    try:
+        result = model.transcribe(chunk_path, **kwargs)
+        return result.get("text", "")
+    except Exception as e:
+        print(f"Whisper primary transcription error ({e}). Trying robust fallback...")
+        try:
+            # Fallback pass without language constraint
+            result = model.transcribe(
+                chunk_path,
+                task="transcribe",
+                temperature=0.0,
+                condition_on_previous_text=False,
+                fp16=False,
+            )
+            return result.get("text", "")
+        except Exception as e2:
+            print(f"Whisper fallback also failed ({e2}). Returning empty.")
+            return ""  
 
 
 def _send_to_sarvam(
@@ -105,9 +139,6 @@ def transcribe_chunk_sarvam(
 
     return " ".join(transcripts).strip()
 
-   
-
-
 
 def transcribe_chunk(
     chunk_path: str,
@@ -117,14 +148,18 @@ def transcribe_chunk(
     lang = language.lower()
 
     if lang in ["hindi", "hinglish"]:
-        return transcribe_chunk_sarvam(
-            chunk_path, "hi-IN"
-        )
+        try:
+            return transcribe_chunk_sarvam(chunk_path, "hi-IN")
+        except Exception as e:
+            print(f"Sarvam Hindi STT error ({e}), falling back to Whisper...")
+            return transcribe_chunk_whisper(chunk_path, language=lang)
 
     elif lang == "kannada":
-        return transcribe_chunk_sarvam(
-            chunk_path, "kn-IN"
-        )
+        try:
+            return transcribe_chunk_sarvam(chunk_path, "kn-IN")
+        except Exception as e:
+            print(f"Sarvam Kannada STT error ({e}), falling back to Whisper...")
+            return transcribe_chunk_whisper(chunk_path, language="kannada")
 
     return transcribe_chunk_whisper(chunk_path)
 
@@ -132,20 +167,19 @@ def transcribe_all(chunks: list, language: str = "english") -> str:
 
     full_transcript = "" 
 
-    engine = (
-    "Sarvam AI"
-    if language.lower() in ["hindi", "hinglish", "kannada"]
-    else "Whisper"
-)
-
     for i, chunk in enumerate(chunks):  
 
         print(f"Transcribing chunk {i + 1}/{len(chunks)}...")
 
         text = transcribe_chunk(chunk, language=language)  
 
-        full_transcript += text + " "  
+        if text and text.strip():
+            full_transcript += text.strip() + " "  
 
     print("Transcription complete.")
 
-    return full_transcript.strip()  
+    cleaned = full_transcript.strip()
+    if not cleaned:
+        return "No audible speech was detected in this recording."
+
+    return cleaned  

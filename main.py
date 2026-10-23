@@ -1,30 +1,46 @@
+import sys
+import os
+import time
 from dotenv import load_dotenv
+
+# Ensure console supports UTF-8 on Windows
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 from utils.audio_processing import process_input
 from core.transcriber import transcribe_all
 from core.summarize import summarize, generate_title
 from core.extractor import extract_action_items, extract_key_decisions, extract_questions
 from core.RAG_engine import build_rag_chain, ask_question
 
-
 load_dotenv()
 
-def run_pipeline(source :str, language :str = "english") -> dict:
+
+def run_pipeline(source: str, language: str = "english") -> dict:
     print("starting AI Video Assistant")
 
     chunks = process_input(source)
 
-    transcript = transcribe_all(chunks,language)
-    print(f"raw transcription (first 300 characters ) {transcript[:300]}")
+    transcript = transcribe_all(chunks, language)
+    try:
+        snippet = transcript[:300].encode('ascii', errors='replace').decode('ascii')
+        print(f"raw transcription (first 300 characters ): {snippet}")
+    except Exception:
+        pass
 
     title = generate_title(transcript)
-
+    time.sleep(1.0)
     summary = summarize(transcript)
-
+    time.sleep(1.0)
     action_item = extract_action_items(transcript)
-
     decisions = extract_key_decisions(transcript)
     questions = extract_questions(transcript)
-    
+
     rag_chain = build_rag_chain(transcript)
 
     return {
@@ -37,10 +53,11 @@ def run_pipeline(source :str, language :str = "english") -> dict:
         "rag_chain": rag_chain,
     }
 
+
 if __name__ == "__main__":
     # CLI entry point
     source = input("Enter YouTube URL or local file path: ").strip()
-    language = input("Language (english/hinglish): ").strip() or "english"
+    language = input("Language (english/hinglish/kannada): ").strip() or "english"
     result = run_pipeline(source, language)
 
     print("\n" + "=" * 60)

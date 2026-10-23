@@ -338,7 +338,7 @@ with st.sidebar:
     st.markdown('<span class="badge badge-purple">Input</span>', unsafe_allow_html=True)
     source = st.text_input("YouTube URL or File Path", placeholder="https://youtube.com/watch?v=... or /path/to/file.mp4")
 
-    language = st.selectbox("Language", ["english", "hinglish"], index=0)
+    language = st.selectbox("Language", ["english", "hinglish", "kannada"], index=0)
 
     run_btn = st.button("⚡  Analyse", use_container_width=True)
 
@@ -390,10 +390,12 @@ if run_btn:
             update_step("title", "active")
             title = generate_title(transcript)
             update_step("title", "done")
+            time.sleep(1.0)
 
             update_step("summary", "active")
             summary = summarize(transcript)
             update_step("summary", "done")
+            time.sleep(1.0)
 
             update_step("extract", "active")
             action_items  = extract_action_items(transcript)
@@ -508,18 +510,19 @@ if st.session_state.result:
         </div>""", unsafe_allow_html=True)
 
     # Chat input
-    chat_col1, chat_col2 = st.columns([5, 1], gap="small")
-    with chat_col1:
-        user_input = st.text_input("Your question", placeholder="What were the main decisions made?", label_visibility="collapsed")
-    with chat_col2:
-        send_btn = st.button("Send →", use_container_width=True)
+    with st.form(key="chat_form", clear_on_submit=True):
+        chat_col1, chat_col2 = st.columns([5, 1], gap="small")
+        with chat_col1:
+            user_input = st.text_input("Your question", placeholder="What were the main decisions made?", label_visibility="collapsed")
+        with chat_col2:
+            send_btn = st.form_submit_button("Send →", use_container_width=True)
 
-    if send_btn and user_input.strip():
-        with st.spinner("Thinking…"):
-            answer = ask_question(r["rag_chain"], user_input.strip())
-        st.session_state.chat_history.append({"role": "user",      "content": user_input.strip()})
-        st.session_state.chat_history.append({"role": "assistant", "content": answer})
-        st.rerun()
+        if send_btn and user_input.strip():
+            with st.spinner("Thinking…"):
+                answer = ask_question(r["rag_chain"], user_input.strip())
+            st.session_state.chat_history.append({"role": "user",      "content": user_input.strip()})
+            st.session_state.chat_history.append({"role": "assistant", "content": answer})
+            st.rerun()
 
     if st.session_state.chat_history:
         if st.button("🗑️ Clear Chat", type="secondary"):

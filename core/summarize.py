@@ -1,46 +1,22 @@
-
 import os
-from importlib import import_module
+import time
 from dotenv import load_dotenv
-
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from core.llm_utils import get_groq_llm, invoke_with_retry
 
 load_dotenv()
 
 
 def get_llm():
-    api_key = os.getenv("GROQ_API_KEY")
-
-    if not api_key:
-        raise RuntimeError(
-            "GROQ_API_KEY is missing. Check your .env file."
-        )
-
-    try:
-        ChatGroq = import_module("langchain_groq").ChatGroq
-    except ImportError as exc:
-        raise RuntimeError(
-            "The langchain-groq package is required. Install it with "
-            "'pip install langchain-groq'."
-        ) from exc
-
-    return ChatGroq(
-        model=os.getenv(
-            "GROQ_MODEL",
-            "llama-3.3-70b-versatile"
-        ),
-        groq_api_key=api_key,
-        temperature=0.3,
-        max_retries=2,
-    )
+    return get_groq_llm(temperature=0.3)
 
 
 def split_transcript(transcript: str) -> list:
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=3000,
+        chunk_size=3500,
         chunk_overlap=200
     )
     return splitter.split_text(transcript)
@@ -52,7 +28,28 @@ def summarize(transcript: str) -> str:
 
     llm = get_llm()
 
-    # Summarize each transcript chunk
+    # If the transcript is small enough, summarize directly in 1 pass to save tokens & avoid 429
+    if len(transcript) <= 4000:
+        single_prompt = ChatPromptTemplate.from_messages([
+            (
+                "system",
+                "You are an expert meeting summarizer. Provide a clear, "
+                "professional summary using bullet points. Include key discussion "
+                "points, decisions, action items, and deadlines when available. "
+                "Do not invent information."
+            ),
+            ("human", "{text}"),
+        ])
+        chain = (
+            RunnablePassthrough()
+            | RunnableLambda(lambda x: {"text": x})
+            | single_prompt
+            | llm
+            | StrOutputParser()
+        )
+        return invoke_with_retry(chain, transcript)
+
+    # For longer transcripts, map-reduce
     map_prompt = ChatPromptTemplate.from_messages([
         (
             "system",
@@ -64,15 +61,14 @@ def summarize(transcript: str) -> str:
     ])
 
     map_chain = map_prompt | llm | StrOutputParser()
-
     chunks = split_transcript(transcript)
 
-    chunk_summaries = [
-        map_chain.invoke({"text": chunk})
-        for chunk in chunks
-    ]
+    chunk_summaries = []
+    for chunk in chunks:
+        res = invoke_with_retry(map_chain, {"text": chunk})
+        chunk_summaries.append(res)
+        time.sleep(0.5)
 
-    # Combine partial summaries into one final summary
     combined = "\n\n".join(chunk_summaries)
 
     combined_prompt = ChatPromptTemplate.from_messages([
@@ -95,7 +91,7 @@ def summarize(transcript: str) -> str:
         | StrOutputParser()
     )
 
-    return combined_chain.invoke(combined)
+    return invoke_with_retry(combined_chain, combined)
 
 
 def generate_title(transcript: str) -> str:
@@ -123,4 +119,5 @@ def generate_title(transcript: str) -> str:
         | StrOutputParser()
     )
 
-    return title_chain.invoke(transcript[:2000]).strip()
+    # Limit to first 1500 chars to avoid exceeding TPM rate limits
+    return invoke_with_retry(title_chain, transcript[:1500]).strip()

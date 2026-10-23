@@ -20,6 +20,7 @@ downloads/
 # Local vector database
 vector_db/
 chroma_db/
+scratch/
 
 # IDE and OS files
 .vscode/
