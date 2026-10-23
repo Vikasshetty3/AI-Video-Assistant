@@ -1,5 +1,7 @@
 import whisper
 import os
+import re
+import time
 import requests
 from pydub import AudioSegment
 from dotenv import load_dotenv
@@ -34,16 +36,31 @@ def load_model():
     return _model 
 
 
+def clean_repetitions(text: str) -> str:
+    """Detect and remove repetitive hallucination loops produced by Whisper."""
+    if not text:
+        return ""
+    # Remove loops of 2-30 characters repeated 4+ times
+    cleaned = re.sub(r'(.{2,30}?)\1{4,}', r'\1', text)
+    # If the text is overwhelmingly composed of repeated characters (hallucination)
+    unique_chars = set(cleaned.replace(" ", ""))
+    if len(text) > 30 and len(unique_chars) <= 4:
+        return ""
+    return cleaned.strip()
+
+
 def transcribe_chunk_whisper(chunk_path: str, language: str = None) -> str:
     if not os.path.exists(chunk_path):
         return ""
 
-    model = load_model()  
+    model = load_model()
 
     kwargs = {
         "task": "transcribe",
-        "temperature": 0.0,
+        "temperature": (0.0, 0.2, 0.4),
         "condition_on_previous_text": False,
+        "compression_ratio_threshold": 2.2,
+        "no_speech_threshold": 0.6,
         "fp16": False,
     }
     if language == "kannada":
@@ -53,58 +70,73 @@ def transcribe_chunk_whisper(chunk_path: str, language: str = None) -> str:
 
     try:
         result = model.transcribe(chunk_path, **kwargs)
-        return result.get("text", "")
+        raw_text = result.get("text", "")
+        return clean_repetitions(raw_text)
     except Exception as e:
         print(f"Whisper primary transcription error ({e}). Trying robust fallback...")
         try:
-            # Fallback pass without language constraint
             result = model.transcribe(
                 chunk_path,
                 task="transcribe",
-                temperature=0.0,
+                temperature=(0.0, 0.2),
                 condition_on_previous_text=False,
+                compression_ratio_threshold=2.2,
                 fp16=False,
             )
-            return result.get("text", "")
+            raw_text = result.get("text", "")
+            return clean_repetitions(raw_text)
         except Exception as e2:
             print(f"Whisper fallback also failed ({e2}). Returning empty.")
-            return ""  
+            return ""
 
 
 def _send_to_sarvam(
     piece_path: str,
     language_code: str
 ) -> str:
-    """Send one ≤30s WAV file to Sarvam and return the English transcript."""
+    """Send one ≤30s WAV file to Sarvam with automatic retry."""
+    if not SARVAM_API_KEY:
+        raise RuntimeError("SARVAM_API_KEY is missing. Check your .env file.")
+
     headers = {
         "api-subscription-key": SARVAM_API_KEY
     }
 
-    with open(piece_path, "rb") as f:
-        files = {
-            "file": (
-                os.path.basename(piece_path),
-                f,
-                "audio/wav"
-            )
-        }
+    last_err = None
+    for attempt in range(3):
+        try:
+            with open(piece_path, "rb") as f:
+                # Use clean ASCII filename in multipart form to avoid Windows encoding issues
+                files = {
+                    "file": ("audio_piece.wav", f, "audio/wav")
+                }
+                data = {
+                    "model": SARVAM_MODEL,
+                    "mode": "transcribe",
+                    "language_code": language_code
+                }
 
-        data = {
-            "model": SARVAM_MODEL,
-            "mode": "transcribe",
-            "language_code": language_code
-        }
+                response = requests.post(
+                    SARVAM_STT_URL,
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=60
+                )
 
-        response = requests.post(
-            SARVAM_STT_URL,
-            headers=headers,
-            files=files,
-            data=data,
-            timeout=120
-        )
+            if response.status_code == 200:
+                return response.json().get("transcript", "")
+            elif response.status_code == 429:
+                time.sleep(2.0 * (attempt + 1))
+            else:
+                response.raise_for_status()
+        except Exception as e:
+            last_err = e
+            time.sleep(1.0 * (attempt + 1))
 
-    response.raise_for_status()
-    return response.json().get("transcript", "")
+    if last_err:
+        raise last_err
+    return ""
 
 
 def transcribe_chunk_sarvam(
@@ -122,9 +154,13 @@ def transcribe_chunk_sarvam(
     piece_ms = SARVAM_PIECE_SECONDS * 1000
     transcripts = []
 
+    temp_dir = "scratch"
+    os.makedirs(temp_dir, exist_ok=True)
+
     for i, start in enumerate(range(0, len(audio), piece_ms)):
         piece = audio[start:start + piece_ms]
-        piece_path = f"{chunk_path}_sv_{i}.wav"
+        # Use clean ASCII name in scratch/ to avoid Windows Unicode filename issues
+        piece_path = os.path.join(temp_dir, f"sv_{os.getpid()}_{i}.wav")
         piece.export(piece_path, format="wav")
 
         try:
@@ -132,10 +168,14 @@ def transcribe_chunk_sarvam(
                 piece_path,
                 language_code
             )
-            transcripts.append(text)
+            if text and text.strip():
+                transcripts.append(text.strip())
         finally:
             if os.path.exists(piece_path):
-                os.remove(piece_path)
+                try:
+                    os.remove(piece_path)
+                except Exception:
+                    pass
 
     return " ".join(transcripts).strip()
 
