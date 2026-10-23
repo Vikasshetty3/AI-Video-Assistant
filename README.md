@@ -33,13 +33,15 @@ The AI Video Assistant helps users understand lengthy video or meeting content w
 AI-Video-Assistant/
 ├── app.py
 ├── main.py
+├── test.py
 ├── core/
 │   ├── extractor.py
-│   ├── RAG_engine.py
-│   ├── summarize.py
-│   └── transcriber.py
+│   ├── rag_engine.py
+│   ├── summarizer.py
+│   ├── transcriber.py
+│   └── vector_store.py
 ├── utils/
-│   └── audio_processing.py
+│   └── audio_processor.py
 ├── .env                 # Local secrets; never commit
 ├── .gitignore
 ├── pyproject.toml

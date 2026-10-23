@@ -1,11 +1,11 @@
 import streamlit as st
 import time
 from dotenv import load_dotenv
-from utils.audio_processing import process_input
+from utils.audio_processor import process_input
 from core.transcriber import transcribe_all
-from core.summarize import summarize, generate_title
+from core.summarizer import summarize, generate_title
 from core.extractor import extract_action_items, extract_key_decisions, extract_questions
-from core.RAG_engine import build_rag_chain, ask_question
+from core.rag_engine import build_rag_chain, ask_question
 
 load_dotenv()
 
@@ -317,8 +317,10 @@ for key, default in {
 # ─── Helpers ────────────────────────────────────────────────────────────────────
 def step_status(steps: dict, key: str) -> str:
     s = steps.get(key, "pending")
-    if s == "active":  return "dot-active"
-    if s == "done":    return "dot-done"
+    if s == "active":
+        return "dot-active"
+    if s == "done":
+        return "dot-done"
     return "dot-pending"
 
 def render_step_bar(label: str, key: str, icon: str):
